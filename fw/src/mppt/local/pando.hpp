@@ -11,11 +11,12 @@
 #pragma once
 #include "../mppt.hpp"
 
-class PandO final : public MPPT {
+class PandO {
     public:
-        PandO(void) : MPPT() {
+        PandO(void) {
             prev_array_voltage = 0.0;
             prev_array_power = 0.0;
+            reference_voltage = 0.0;
         }
 
         void input_context(void *args) {
@@ -35,7 +36,7 @@ class PandO final : public MPPT {
             #undef OUTPUT_CURRENT
         }
 
-        void step_algorithm(void) {
+        float step_algorithm(void) {
             float array_power = array_voltage * array_current;
 
             // Get the discernment criteria
@@ -65,12 +66,13 @@ class PandO final : public MPPT {
             // Stash for next call.
             prev_array_voltage = array_voltage;
             prev_array_power = array_power;
+            return reference_voltage;
         }
 
         void reset_state(void) {
-            MPPT::reset_state();
             prev_array_voltage = 0.0;
             prev_array_power = 0.0;
+            reference_voltage = 0.0;
         }
         
     protected:
@@ -79,6 +81,7 @@ class PandO final : public MPPT {
         float array_current;
         float battery_voltage;
         float battery_current;
+        float reference_voltage;
 
         /** Saved internal data. */
         float prev_array_voltage;
