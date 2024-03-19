@@ -11,69 +11,99 @@
 
 #pragma once
 #include "../mppt.hpp"
-#include "math.h"
+#include "../local/pando.hpp"
+#include <cmath>
+#include <random>
+
+#define MAX_INP_VOLT 70.0
+#define INITIAL_TEMP 10.0
+#define COOLING_RATE 0.99
+#define NUM_ITERATIONS 100
 
 class SimulatedAnnealing final : public MPPT {
 public:
-    SimulatedAnnealing(void) : MPPT(), 
-        engine(std::random_device{}()), 
-        distribution(-max_voltage_step, max_voltage_step) {
-        current_temperature = initial_temperature;
+    SimulatedAnnealing(void) : MPPT() {
+        prev_array_voltage = 0.0;
+        prev_array_power = 0.0;
+        temperature = INITIAL_TEMP;
+        pandO = new PandO();
+        gen = std::mt19937(std::random_device{}());
     }
 
-    void input_context(void *args) override {
-        float* argArray = static_cast<float*>(args);
-        array_voltage = argArray[0];
-        array_current = argArray[1];
+    void input_context(void *args) {
+        #define INPUT_VOLTAGE ((float *) args)[0]
+        #define INPUT_CURRENT ((float *) args)[1]
+        #define OUTPUT_VOLTAGE ((float *) args)[2]
+        #define OUTPUT_CURRENT ((float *) args)[3]
+
+        array_voltage = INPUT_VOLTAGE;
+        array_current = INPUT_CURRENT;
+        battery_voltage = OUTPUT_VOLTAGE;
+        battery_current = OUTPUT_CURRENT;
+        pandO->input_context(args);
+
+        #undef INPUT_VOLTAGE
+        #undef INPUT_CURRENT
+        #undef OUTPUT_VOLTAGE
+        #undef OUTPUT_CURRENT
     }
 
-    void step_algorithm(void) override {
-        if (current_temperature > final_temperature) {
-            float new_voltage = generate_new_voltage(reference_voltage);
-            float new_power = calculate_power(new_voltage, array_current);
+    void step_algorithm(void) {
+        if (temperature > 0.1) {
+            float current_power = array_voltage * array_current;
+            float best_power = current_power;
+            float best_voltage = array_voltage;
 
-            if (new_power > max_power) {
-                max_power = new_power;
-                reference_voltage = new_voltage;
-            } else {
-                float delta_power = new_power - max_power;
-                if (exp(delta_power / current_temperature) > distribution(engine)) {
-                    reference_voltage = new_voltage;
+            for (int i = 0; i < NUM_ITERATIONS; i++) {
+                float new_voltage = array_voltage + get_random_value(-1.0, 1.0);
+                new_voltage = std::max(0.0f, std::min(new_voltage, MAX_INP_VOLT));
+                float new_power = new_voltage * array_current;
+
+                if (new_power > best_power) {
+                    best_power = new_power;
+                    best_voltage = new_voltage;
+                } else {
+                    float acceptance_probability = std::exp((new_power - current_power) / temperature);
+                    if (get_random_value(0.0, 1.0) < acceptance_probability) {
+                        best_power = new_power;
+                        best_voltage = new_voltage;
+                    }
                 }
             }
 
-            current_temperature *= cooling_rate;
+            reference_voltage = best_voltage;
+            temperature *= COOLING_RATE;
+        } else {
+            reference_voltage = pandO->step_algorithm();
         }
+
+        prev_array_power = array_voltage * array_current;
+        prev_array_voltage = array_voltage;
     }
 
-    void reset_state(void) override {
-        MPPT::reset_state();
-        current_temperature = initial_temperature;
-        max_power = 0.0;
+    void reset_state(void) {
+        reference_voltage = 0.0;
+        prev_array_voltage = 0.0;
+        prev_array_power = 0.0;
+        temperature = INITIAL_TEMP;
+        pandO->reset_state();
     }
 
 protected:
     float array_voltage;
     float array_current;
-    float max_power = 0.0;
+    float battery_voltage;
+    float battery_current;
 
-    float initial_temperature = 25.0;
-    float final_temperature = 0.4;
-    float cooling_rate = 0.75;
-    float current_temperature;
-
-    std::mt19937 engine;
-    std::uniform_real_distribution<float> distribution;
+    float prev_array_voltage;
+    float prev_array_power;
+    float temperature;
+    PandO* pandO;
+    std::mt19937 gen;
 
 private:
-    float generate_new_voltage(float current_voltage) {
-        float voltage_variation = distribution(engine);
-        return current_voltage + voltage_variation;
+    float get_random_value(float min, float max) {
+        std::uniform_real_distribution<float> dist(min, max);
+        return dist(gen);
     }
-
-    float calculate_power(float voltage, float current) {
-        return voltage * current;
-    }
-
-    static constexpr float max_voltage_step = 0.5;
 };

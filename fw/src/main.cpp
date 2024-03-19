@@ -32,6 +32,7 @@
 #include "./Filter/MedianFilter.h"
 #include "./pid_controller/pid_controller.hpp"
 #include "./mppt/local/pando.hpp"
+#include "./mppt/global/global_algorithms.hpp"
 
 // Debug define
 #define __DEBUG__ 1 // 0 - no debug, 1 - turn on DEBUG, auto start and disable CAN

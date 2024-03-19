@@ -11,9 +11,9 @@
 #pragma once
 #include "../mppt.hpp"
 
-class PandO {
+class PandO : public MPPT {
     public:
-        PandO(void) {
+        PandO(void) : MPPT() {
             prev_array_voltage = 0.0;
             prev_array_power = 0.0;
             reference_voltage = 0.0;
