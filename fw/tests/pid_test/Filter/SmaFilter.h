@@ -16,6 +16,7 @@
  */
 #pragma once
 #include "Filter.h"
+#include <cstdint>
 
 class SmaFilter final : public Filter {
     public:
@@ -71,6 +72,10 @@ class SmaFilter final : public Filter {
         }
 
         void shutdown(void) override { delete[] mDataBuffer; }
+
+        float getSum(void) { return mSum; }
+        
+        uint16_t getSamples(void) { return mNumSamples; }
 
     private:
         /** Data Buffer. */

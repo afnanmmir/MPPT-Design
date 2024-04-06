@@ -36,7 +36,7 @@
 #define PWM_FREQ 50000.0 // v0.2.0
 // 0.0 - Force LOW SIDE switch closed, HIGH side switch open
 // 1.0 - Force HIGH SIDE switch closed, LOW side switch open
-#define PWM_DUTY 0.538
+#define PWM_DUTY 0.6
 
 #define HEARTBEAT_FREQ 1.0
 #define REDLINE_FREQ 2.0
@@ -49,11 +49,11 @@
 #define MIN_INP_VOLT 0.0
 #define MAX_INP_VOLT 70.0
 #define MIN_INP_CURR 0.0
-#define MAX_INP_CURR 8.0
-#define MIN_OUT_VOLT 70.0
-#define MAX_OUT_VOLT 130.0
+#define MAX_INP_CURR 7.5
+#define MIN_OUT_VOLT 0.0
+#define MAX_OUT_VOLT 140
 #define MIN_OUT_CURR 0.0
-#define MAX_OUT_CURR 5.0
+#define MAX_OUT_CURR 3.5
 #define MIN_DUTY 0.1
 #define MAX_DUTY 0.9
 
@@ -180,7 +180,7 @@ void _assert(bool condition, ErrorCode code);
 int main() {
     set_time(0);
 
-    ThisThread::sleep_for(1000ms);
+    ThisThread::sleep_for(5000ms);
     printf("Starting up main program. Boost TEST.\n");
     printf("Operating freq: %f\n", PWM_FREQ);
     printf("Operating duty cycle: %f\n", PWM_DUTY);
@@ -223,12 +223,14 @@ void event_heartbeat(void) {
     // CSV format for later analysis.
     time_t seconds = time(NULL);
     printf(
-        "%u,%f,%f,%f,%f\n", 
+        "%u, VIN %f, AIN %f, PIN %f, VOUT %f, AOUT %f, POUT %f\n", 
         (unsigned int) seconds, 
         arr_voltage_filter.getResult(), 
         arr_current_filter.getResult(), 
+        arr_voltage_filter.getResult()*arr_current_filter.getResult(),
         batt_voltage_filter.getResult(), 
-        batt_current_filter.getResult()
+        batt_current_filter.getResult(),
+        batt_voltage_filter.getResult()*batt_current_filter.getResult()
     );
 }
 

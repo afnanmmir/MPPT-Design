@@ -47,6 +47,7 @@ double PIDControllerStep(PIDConfig_t config, double desiredOutput, double actual
 
     /* Calculate new output. */
     output = (config.p * error) + (config.i * compInt) + (config.d * compDer);
+    // printf("desired %f, actual %f, delta %f\n", desiredOutput, actualOutput, output);
 
     /* Constrain the output to prevent hardware failure down the road. */
     if (output > config.max) output = config.max;

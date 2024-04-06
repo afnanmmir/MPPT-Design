@@ -33,25 +33,26 @@
 #include "FastPWM.h"
 #include "./pid_controller/pid_controller.hpp"
 #include "./Filter/MedianFilter.h"
+#include "./Filter/SmaFilter.h"
 
 // Control parameters
 #define PWM_FREQ 50000.0
 #define PWM_DUTY_START 0.5
 
-#define HEARTBEAT_FREQ 1.0
-#define REDLINE_FREQ 2.0
+#define HEARTBEAT_FREQ 10.0
+#define REDLINE_FREQ 10.0
 #define MEASURE_FREQ 10.0
-#define PID_FREQ 0.5
+#define PID_FREQ 2.0
 
-#define FILTER_WIDTH 10
+#define FILTER_WIDTH 50
 #define NUM_SENSORS 4
 
-#define PID_P_COEFF 1E-5
+#define PID_P_COEFF 1E-3
 #define PID_I_COEFF 0.0
 #define PID_D_COEFF 0.0
 
 // Test parameters
-#define SINK_TARGET 80 // V
+#define SINK_TARGET 40 // V
 #define NOISE_ON 0 // 0 OFF, 1 ON
 #define SOURCE_NOISE_AMPLITUDE 1.0 // V
 #define SINK_NOISE_AMPLITUDE 1.0 // V
@@ -61,12 +62,14 @@
 #define MAX_INP_VOLT 70.0
 #define MIN_INP_CURR 0.0
 #define MAX_INP_CURR 8.0
-#define MIN_OUT_VOLT 80.0
-#define MAX_OUT_VOLT 130.0
+#define MIN_OUT_VOLT 5.0
+#define MAX_OUT_VOLT 125
 #define MIN_OUT_CURR 0.0
-#define MAX_OUT_CURR 5.0
+#define MAX_OUT_CURR 4.0
 #define MIN_DUTY 0.1
 #define MAX_DUTY 0.9
+#define MIN_DUTY_DELTA -0.1
+#define MAX_DUTY_DELTA 0.1
 
 enum SensorIdx {
     SEN_IDX_ARRV = 0,
@@ -91,7 +94,7 @@ typedef enum Error {
 } ErrorCode;
 
 typedef struct Sensors {
-    float slope_correction[NUM_SENSORS] = { 1.03, 1.00, 1.00, 0.91 };
+    float slope_correction[NUM_SENSORS] = { 1.00, 1.00, 1.00, 1.00 };
     float y_int_correction[NUM_SENSORS] = { 0.0, 0.0, 0.0, 0.0 };
 } Sensors;
 
@@ -104,12 +107,12 @@ AnalogIn arr_voltage_sensor(A1);
 AnalogIn arr_current_sensor(A0);
 AnalogIn batt_voltage_sensor(A5);
 AnalogIn batt_current_sensor(A6);
-MedianFilter arr_voltage_filter(FILTER_WIDTH);
-MedianFilter arr_current_filter(FILTER_WIDTH);
-MedianFilter batt_voltage_filter(FILTER_WIDTH);
-MedianFilter batt_current_filter(FILTER_WIDTH);
+SmaFilter arr_voltage_filter(FILTER_WIDTH);
+SmaFilter arr_current_filter(FILTER_WIDTH);
+SmaFilter batt_voltage_filter(FILTER_WIDTH);
+SmaFilter batt_current_filter(FILTER_WIDTH);
 Sensors sensors;
-PIDConfig_t pidConfig = PIDControllerInit(MAX_DUTY, MIN_DUTY, PID_P_COEFF, PID_I_COEFF, PID_D_COEFF);
+PIDConfig_t pidConfig = PIDControllerInit(MAX_DUTY_DELTA, MIN_DUTY_DELTA, PID_P_COEFF, PID_I_COEFF, PID_D_COEFF);
 
 Ticker ticker_heartbeat;
 Ticker ticker_measure;
@@ -203,7 +206,7 @@ void _assert(bool condition, ErrorCode code);
 int main() {
     set_time(0);
 
-    ThisThread::sleep_for(1000ms);
+    ThisThread::sleep_for(5000ms);
     printf("Starting up main program. PID TEST.\n");
 
     arr_voltage_sensor.set_reference_voltage(3.321);
@@ -215,8 +218,10 @@ int main() {
     led_tracking = 0;
     led_error = 0;
 
+    
     pwm_out.period(1.0 / PWM_FREQ);
     pwm_out.write(1.0 - PWM_DUTY_START); // Inverted to get the correct output.
+    // printf("%f", pwm_out.read());
     pwm_enable = 1;
 
     ticker_heartbeat.attach(&handler_heartbeat, (1.0 / HEARTBEAT_FREQ));
@@ -246,13 +251,15 @@ void handler_run_pid(void) {
 void event_heartbeat(void) {
     // CSV format for later analysis.
     time_t seconds = time(NULL);
+    
     printf(
-        "%u,%f,%f,%f,%f\n", 
+        "%u, VIN %f, AIN %f, VOUT %f, AOUT %f, PWM %f\n", 
         (unsigned int) seconds, 
-        arr_voltage_filter.getResult(), 
+        arr_voltage_filter.getResult(),
         arr_current_filter.getResult(), 
         batt_voltage_filter.getResult(), 
-        batt_current_filter.getResult()
+        batt_current_filter.getResult(),
+        pwm_out.read()
     );
 }
 
@@ -266,6 +273,8 @@ void event_measure_sensors(void) {
     arr_v += sin(rand()) * SOURCE_NOISE_AMPLITUDE - SOURCE_NOISE_AMPLITUDE / 2;
     batt_v += sin(rand()) * SINK_NOISE_AMPLITUDE - SINK_NOISE_AMPLITUDE / 2;
 
+
+    // printf("curr: %f, sum: %f, numSamples: %d\n", arr_v, arr_voltage_filter.getSum(), arr_voltage_filter.getSamples());
     arr_voltage_filter.addSample(arr_v);
     arr_current_filter.addSample(arr_i);
     batt_voltage_filter.addSample(batt_v);
@@ -292,7 +301,8 @@ void event_check_redlines(void) {
 
     _assert(arr_v_filtered < batt_v_filtered, INP_OUT_INV);
 
-    float pwm = pwm_out;
+    float pwm = pwm_out.read();
+    // printf("%f\n", pwm);
     _assert(pwm >= MIN_DUTY, PWM_ULO);
     _assert(pwm <= MAX_DUTY, PWM_OLO);
 }
@@ -301,13 +311,20 @@ void event_run_pid(void) {
     // TODO: check if direction of travel is correct.
     // Duty direction is reverse of error, so we invert the result.
     // We have a fixed input so we alter the output.
-    float new_duty = PIDControllerStep(
+    float new_duty_delta = PIDControllerStep(
         pidConfig, 
         (double) SINK_TARGET, 
         (double) batt_voltage_filter.getResult()
     );
 
-    pwm_out.write(1.0 - new_duty); // Inverted to get the correct output.
+    float new_duty = pwm_out.read() - new_duty_delta;
+
+    // printf("old duty %f, new duty %f\n", 1-pwm_out.read(), 1-new_duty);
+
+    if(new_duty <= MIN_DUTY) new_duty = MIN_DUTY;
+    else if(new_duty >= MAX_DUTY) new_duty = MAX_DUTY;
+
+    pwm_out.write(new_duty); // Inverted to get the correct output.
 }
 
 float calibrate_arr_v(float inp) {
