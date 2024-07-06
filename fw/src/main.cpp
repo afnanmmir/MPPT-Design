@@ -33,9 +33,10 @@
 #include "./pid_controller/pid_controller.hpp"
 #include "./mppt/local/pando.hpp"
 #include "./mppt/global/global_algorithms.hpp"
+#include <cstdio>
 
 // Debug define
-#define __DEBUG__ 1 // 0 - no debug, 1 - turn on DEBUG, auto start and disable CAN
+#define __DEBUG__ 1 //  0 - no debug, 1 - turn on DEBUG, auto start and disable CAN
 
 // Control parameters
 #define PWM_FREQ 50000.0
@@ -59,10 +60,10 @@
 #define MAX_INP_VOLT 70.0
 #define MIN_INP_CURR 0.0
 #define MAX_INP_CURR 8.0
-#define MIN_OUT_VOLT 80.0
-#define MAX_OUT_VOLT 130.0
+#define MIN_OUT_VOLT 0.0
+#define MAX_OUT_VOLT 135.0
 #define MIN_OUT_CURR 0.0
-#define MAX_OUT_CURR 5.0
+#define MAX_OUT_CURR 2.0
 #define MIN_DUTY 0.1
 #define MAX_DUTY 0.9
 #define MIN_DUTY_DELTA -.1
@@ -84,6 +85,7 @@
 #define CAN_ARRI_MEA    0x60B
 #define CAN_BATTV_MEA   0x60C
 #define CAN_BATTI_MEA   0x60D
+#define CAN_CHARGE_EN   0x10C
 
 enum State {
     STATE_STOP = 0,
@@ -263,7 +265,7 @@ void _assert(bool condition, ErrorCode code);
 int main(void) {
     set_time(0);
 
-    ThisThread::sleep_for(1000ms);
+    ThisThread::sleep_for(3000ms);
     printf("Starting up main program. MPPT SRC.\n");
 
     arr_voltage_sensor.set_reference_voltage(3.321);
@@ -278,10 +280,11 @@ int main(void) {
     set_mode = false;
     ack_fault = false;
     current_state = STATE_STOP;
-    ref_inp_v = 0.0; // TODO: double check starting point, maybe should be VOC
+    // ref_inp_v = 0.0; // TODO: double check starting point, maybe should be VOC
 
     pwm_enable = 0;
     pwm_out.period(1.0 / PWM_FREQ);
+    pwm_out.write(1.0 - PWM_DUTY_START);
 
     ticker_heartbeat.attach(&handler_heartbeat, HEARTBEAT_PERIOD);
     ticker_measure.attach(&handler_measure_sensors, MEASURE_PERIOD);
@@ -289,6 +292,9 @@ int main(void) {
     ticker_pid.attach(&handler_run_pid, PID_PERIOD);
     ticker_mppt.attach(&handler_run_mppt, MPPT_PERIOD);
     can.attach(&handler_process_can, CAN::RxIrq);
+
+    ref_inp_v = arr_voltage_filter.getResult();
+    mppt.set_reference(ref_inp_v);
 
 #if __DEBUG__ == 1
     // Force state machine on.
@@ -391,7 +397,8 @@ void event_check_redlines(void) {
 
     _assert(arr_v_filtered < batt_v_filtered, INP_OUT_INV);
 
-    float pwm = pwm_out;
+    float pwm = pwm_out.read();
+    printf("pwm %f\n\r", pwm);
     _assert(pwm >= MIN_DUTY, PWM_ULO);
     _assert(pwm <= MAX_DUTY, PWM_OLO);
 }
@@ -424,33 +431,44 @@ void event_run_mppt(void) {
     // Derive and set reference pwm starting point
     ref_inp_v = mppt.get_reference();
     float ref_pwm = 1.0 - (ref_inp_v / batt_voltage_filter.getResult());
+    
+    printf("ref_pwm %f\n\r", ref_pwm);
+
+    if(ref_pwm <= MIN_DUTY) ref_pwm = MIN_DUTY;
+    else if(ref_pwm >= MAX_DUTY) ref_pwm = MAX_DUTY;
+    
     pwm_out.write(1.0 - ref_pwm); // Negative logic duty cycle
 }
 
 void event_process_can(void) {
     // TODO: Read message
-    uint32_t can_id = 0;
-    switch (can_id) {
-        case CAN_SET_MODE:
-            // TODO: change state machine mode.
-            set_mode = false;
-            queue.call(&event_update_state_machine);
-            break;
-        case CAN_ACK_FAULT:
-            // TODO: ack fault and exit error state.
-            ack_fault = true;
-            queue.call(&event_update_state_machine);
-            break;
-        case CAN_SEN_CONF1:
-        case CAN_SEN_CONF2:
-        case CAN_SEN_CONF3:
-        case CAN_CON_CONF:
-        case CAN_DEB_CONF:
-            // TODO: Not implemented. Throw exception.
-            break;
-        default:
-            // Ignore any other CAN messages.
-            break;
+    CANMessage msg;
+    if(can.read(msg)) {
+        switch (msg.id) {
+            case CAN_SET_MODE:
+                // TODO: change state machine mode.
+                set_mode = false;
+                queue.call(&event_update_state_machine);
+                break;
+            case CAN_ACK_FAULT:
+                // TODO: ack fault and exit error state.
+                ack_fault = true;
+                queue.call(&event_update_state_machine);
+                break;
+            case CAN_CHARGE_EN:
+                if(msg.data[0]) set_mode = true;
+                else set_mode = false;
+            case CAN_SEN_CONF1:
+            case CAN_SEN_CONF2:
+            case CAN_SEN_CONF3:
+            case CAN_CON_CONF:
+            case CAN_DEB_CONF:
+                // TODO: Not implemented. Throw exception.
+                break;
+            default:
+                // Ignore any other CAN messages.
+                break;
+        }
     }
 }
 
@@ -494,7 +512,8 @@ void event_update_state_machine(void) {
             mppt.reset_state();
 
             pwm_out.write(1.0 - 0.5); // 50% duty cycle.
-            ref_inp_v = 0.0; // TODO: double check starting point, maybe should be VOC
+            ref_inp_v = arr_voltage_filter.getResult(); // TODO: double check starting point, maybe should be VOC
+            mppt.set_reference(ref_inp_v);
 
             led_tracking = 0;
             led_error = 0;

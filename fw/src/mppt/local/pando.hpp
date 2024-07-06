@@ -73,6 +73,10 @@ class PandO : public MPPT {
             prev_array_power = 0.0;
             reference_voltage = 0.0;
         }
+
+        void set_reference(float new_ref) {
+            reference_voltage = new_ref;
+        }
         
     protected:
         /** Required inputs. */
