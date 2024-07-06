@@ -65,6 +65,8 @@
 #define MAX_OUT_CURR 5.0
 #define MIN_DUTY 0.1
 #define MAX_DUTY 0.9
+#define MIN_DUTY_DELTA -.1
+#define MAX_DUTY_DELTA .1
 
 // CAN IDs
 #define BOARD_CAN_MODIFIER 0x000 // A - 0x000, B - 0x010, C - 0x020
@@ -131,7 +133,7 @@ MedianFilter batt_voltage_filter(FILTER_WIDTH);
 MedianFilter batt_current_filter(FILTER_WIDTH);
 CAN can(D10, D2);
 Sensors sensors;
-PIDController pid(MIN_DUTY, MAX_DUTY, PID_P_COEFF, PID_I_COEFF, PID_D_COEFF);
+PIDController pid(MIN_DUTY_DELTA, MAX_DUTY_DELTA, PID_P_COEFF, PID_I_COEFF, PID_D_COEFF);
 PandO mppt;
 
 
@@ -395,8 +397,14 @@ void event_check_redlines(void) {
 }
 
 void event_run_pid(void) {
-    float new_duty = pid.step_pid(ref_inp_v, arr_voltage_filter.getResult());
-    pwm_out.write(1.0 - new_duty); // Inverted to get the correct output.
+    float new_duty_delta = pid.step_pid(ref_inp_v, arr_voltage_filter.getResult());
+    
+    float new_duty = pwm_out.read() - new_duty_delta;
+
+    if(new_duty <= MIN_DUTY) new_duty = MIN_DUTY;
+    else if(new_duty >= MAX_DUTY) new_duty = MAX_DUTY;
+    
+    pwm_out.write(new_duty); // Inverted to get the correct output.
 }
 
 void event_run_mppt(void) {    
@@ -411,7 +419,7 @@ void event_run_mppt(void) {
     mppt.input_context((void*)context);
 
     // run the algorithm
-    mppt.step_algorithm();    
+    mppt.step_algorithm();
 
     // Derive and set reference pwm starting point
     ref_inp_v = mppt.get_reference();
