@@ -36,7 +36,7 @@ class PandO : public MPPT {
             #undef OUTPUT_CURRENT
         }
 
-        float step_algorithm(void) {
+        void step_algorithm(void) {
             float array_power = array_voltage * array_current;
 
             // Get the discernment criteria
@@ -66,7 +66,6 @@ class PandO : public MPPT {
             // Stash for next call.
             prev_array_voltage = array_voltage;
             prev_array_power = array_power;
-            return reference_voltage;
         }
 
         void reset_state(void) {
